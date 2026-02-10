@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Projects • My Portfolio</title>
+		<link rel="stylesheet" href="/styles/style.css" />
+		<link rel="stylesheet" href="/styles/mediaqueries.css" />
+	</head>
+	<body>
+		<nav id="desktop-nav">
+			<div class="logo">Evelio Culin</div>
+			<div>
+				<ul class="nav-links">
+					<li><a href="/public/index.html#about">About</a></li>
+					<li><a href="/public/index.html#experience">Experience</a></li>
+					<li><a href="/public/projects.html">Projects</a></li>
+					<li><a href="/public/index.html#contact">Contact</a></li>
+				</ul>
+			</div>
+		</nav>
+		<nav id="hamburger-nav">
+			<div class="logo">Evelio Culin</div>
+			<div class="hamburger-menu">
+				<div class="hamburger-icon" onclick="toggleMenu()">
+					<span></span>
+					<span></span>
+					<span></span>
+				</div>
+				<div class="menu-links">
+					<li><a href="/public/index.html#about" onclick="toggleMenu()">About</a></li>
+					<li><a href="/public/index.html#experience" onclick="toggleMenu()">Experience</a></li>
+					<li><a href="/public/projects.html" onclick="toggleMenu()">Projects</a></li>
+					<li><a href="/public/index.html#contact" onclick="toggleMenu()">Contact</a></li>
+				</div>
+			</div>
+		</nav>
+
+		<section id="projects-page" class="projects-section">
+			<h1 class="title">Projects</h1>
+			<p class="section__text__p2" style="text-align:center; margin-bottom:2rem;">Selección de proyectos y demos</p>
+
+			<div class="projects-grid">
+				<!-- Project with embedded HTML view -->
+				<article class="project-card">
+					<h3>Uso de Three.js</h3>
+					<p style="margin-bottom:0.75rem;">Vista de un cubo de Rubik interactivo.</p>
+					<div class="project-embed">
+						<iframe src="/public/demos/CuboRubik.html" title="Embedded Demo"></iframe>
+					</div>
+					<div class="btn-container" style="margin-top:0.75rem;">
+						<button class="btn btn-color-2" onclick="window.open('/public/demos/CuboRubik.html')">Abrir demo</button>
+					</div>
+				</article>
+
+				<!-- External project link -->
+				<article class="project-card">
+					<h3>GitHub Portfolio</h3>
+					<p style="margin-bottom:0.75rem;">Explora más proyectos en GitHub.</p>
+					<div class="btn-container">
+						<button class="btn btn-color-1" onclick="location.href='https://github.com/Koronne'">Ver GitHub</button>
+					</div>
+				</article>
+
+				<!-- Placeholder project -->
+				<article class="project-card">
+					<h3>Proyecto Destacado</h3>
+					<p style="margin-bottom:0.75rem;">Descripción breve del proyecto. Reemplaza con tu contenido.</p>
+					<div class="btn-container">
+						<button class="btn btn-color-2" onclick="alert('Agrega tu enlace o demo aquí')">Más info</button>
+					</div>
+				</article>
+			</div>
+		</section>
+
+		<script src="/scripts/script.js"></script>
+	</body>
+	</html>
