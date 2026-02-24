@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Carro 3D con THREE.js</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: radial-gradient(circle at top, #1a2335 0%, #0b1018 65%);
+        overflow: hidden;
+      }
+
+      canvas {
+        display: block;
+      }
+
+      .label {
+        position: fixed;
+        top: 14px;
+        left: 14px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        color: #dce7ff;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        background: rgba(5, 10, 20, 0.55);
+        border: 1px solid rgba(220, 231, 255, 0.2);
+        user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="label">Arrastra para rotar · Rueda para zoom</div>
+  </body>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0b1018, 18, 32);
+
+    const camera = new THREE.PerspectiveCamera(
+      60,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      100,
+    );
+    camera.position.set(7, 4.2, 8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+    scene.add(ambient);
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    keyLight.position.set(7, 10, 5);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(1024, 1024);
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 40;
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0x77a0ff, 0.35);
+    fillLight.position.set(-6, 4, -4);
+    scene.add(fillLight);
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 40),
+      new THREE.MeshStandardMaterial({ color: 0x1a2536, roughness: 0.95 }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -1.1;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const car = new THREE.Group();
+
+    const bodyMaterial = new THREE.MeshStandardMaterial({
+      color: 0xd62828,
+      metalness: 0.25,
+      roughness: 0.35,
+    });
+    const glassMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8fb9ff,
+      metalness: 0.05,
+      roughness: 0.15,
+      transparent: true,
+      opacity: 0.8,
+    });
+
+    const lowerBody = new THREE.Mesh(new THREE.BoxGeometry(4.9, 1, 2.2), bodyMaterial);
+    lowerBody.castShadow = true;
+    lowerBody.position.y = 0;
+    car.add(lowerBody);
+
+    const upperBody = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.9, 2.0), bodyMaterial);
+    upperBody.castShadow = true;
+    upperBody.position.set(-0.15, 0.85, 0);
+    car.add(upperBody);
+
+    const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.62, 1.92), glassMaterial);
+    windshield.castShadow = true;
+    windshield.position.set(-0.17, 0.92, 0);
+    car.add(windshield);
+
+    const bumperFront = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 0.5, 2.1),
+      new THREE.MeshStandardMaterial({ color: 0x22252d, metalness: 0.8, roughness: 0.35 }),
+    );
+    bumperFront.position.set(2.6, -0.15, 0);
+    bumperFront.castShadow = true;
+    car.add(bumperFront);
+
+    const bumperRear = bumperFront.clone();
+    bumperRear.position.x = -2.6;
+    car.add(bumperRear);
+
+    const headlightMaterial = new THREE.MeshStandardMaterial({
+      color: 0xfff6c1,
+      emissive: 0xffd75e,
+      emissiveIntensity: 0.35,
+      metalness: 0.05,
+      roughness: 0.4,
+    });
+    const taillightMaterial = new THREE.MeshStandardMaterial({
+      color: 0xff4c4c,
+      emissive: 0xff2323,
+      emissiveIntensity: 0.35,
+      metalness: 0.05,
+      roughness: 0.4,
+    });
+
+    const headlightL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.2, 0.42), headlightMaterial);
+    headlightL.position.set(2.76, 0.1, 0.62);
+    car.add(headlightL);
+
+    const headlightR = headlightL.clone();
+    headlightR.position.z = -0.62;
+    car.add(headlightR);
+
+    const taillightL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.2, 0.42), taillightMaterial);
+    taillightL.position.set(-2.76, 0.1, 0.62);
+    car.add(taillightL);
+
+    const taillightR = taillightL.clone();
+    taillightR.position.z = -0.62;
+    car.add(taillightR);
+
+    const wheelMaterial = new THREE.MeshStandardMaterial({
+      color: 0x111111,
+      roughness: 0.85,
+      metalness: 0.1,
+    });
+    const rimMaterial = new THREE.MeshStandardMaterial({
+      color: 0xc6ccd8,
+      roughness: 0.35,
+      metalness: 0.85,
+    });
+
+    function createWheel(x, z) {
+      const wheelGroup = new THREE.Group();
+
+      const tire = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.45, 0.45, 0.45, 24),
+        wheelMaterial,
+      );
+      tire.rotation.z = Math.PI / 2;
+      tire.castShadow = true;
+      wheelGroup.add(tire);
+
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.47, 16), rimMaterial);
+      rim.rotation.z = Math.PI / 2;
+      wheelGroup.add(rim);
+
+      wheelGroup.position.set(x, -0.58, z);
+      return wheelGroup;
+    }
+
+    const wheels = [
+      createWheel(1.5, 1.02),
+      createWheel(-1.5, 1.02),
+      createWheel(1.5, -1.02),
+      createWheel(-1.5, -1.02),
+    ];
+    wheels.forEach((wheel) => car.add(wheel));
+
+    car.position.y = 0.15;
+    scene.add(car);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 4;
+    controls.maxDistance = 20;
+    controls.target.set(0, 0.25, 0);
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const t = clock.getElapsedTime();
+      car.position.y = 0.15 + Math.sin(t * 1.6) * 0.03;
+      car.rotation.y = Math.sin(t * 0.4) * 0.08;
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</html>
