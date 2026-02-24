@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cámara 3D con THREE.js</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: radial-gradient(circle at 18% 10%, #2e3340 0%, #12151d 70%);
+      }
+
+      canvas {
+        display: block;
+      }
+
+      .label {
+        position: fixed;
+        top: 14px;
+        left: 14px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        color: #f0f4ff;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        background: rgba(8, 12, 20, 0.58);
+        border: 1px solid rgba(240, 244, 255, 0.2);
+        user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="label">Cámara 3D · Arrastra para rotar</div>
+  </body>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x12151d, 16, 30);
+
+    const camera = new THREE.PerspectiveCamera(
+      60,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      100,
+    );
+    camera.position.set(5.2, 3.3, 6.8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambient);
+
+    const key = new THREE.DirectionalLight(0xffffff, 0.9);
+    key.position.set(7, 9, 5);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0x8ea1d9, 0.3);
+    fill.position.set(-5, 4, -4);
+    scene.add(fill);
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(32, 32),
+      new THREE.MeshStandardMaterial({ color: 0x202633, roughness: 0.96 }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -1.15;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const cameraModel = new THREE.Group();
+
+    const bodyMaterial = new THREE.MeshStandardMaterial({
+      color: 0x22262f,
+      roughness: 0.55,
+      metalness: 0.45,
+    });
+    const detailMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0f1116,
+      roughness: 0.68,
+      metalness: 0.2,
+    });
+    const lensGlassMaterial = new THREE.MeshStandardMaterial({
+      color: 0x6fa6ff,
+      roughness: 0.12,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.82,
+      emissive: 0x1a3055,
+      emissiveIntensity: 0.18,
+    });
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(4.2, 2.4, 2.2), bodyMaterial);
+    body.castShadow = true;
+    cameraModel.add(body);
+
+    const topPrism = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.7, 1.2), bodyMaterial);
+    topPrism.position.set(0, 1.45, 0);
+    topPrism.castShadow = true;
+    cameraModel.add(topPrism);
+
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.8, 1.9), detailMaterial);
+    grip.position.set(1.85, -0.2, 0);
+    grip.castShadow = true;
+    cameraModel.add(grip);
+
+    const lensOuter = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.05, 1.15, 1.15, 48),
+      detailMaterial,
+    );
+    lensOuter.rotation.z = Math.PI / 2;
+    lensOuter.position.set(-2.45, 0.05, 0);
+    lensOuter.castShadow = true;
+    cameraModel.add(lensOuter);
+
+    const lensMid = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.88, 1.0, 0.55, 48),
+      new THREE.MeshStandardMaterial({ color: 0x1a1f2b, roughness: 0.35, metalness: 0.5 }),
+    );
+    lensMid.rotation.z = Math.PI / 2;
+    lensMid.position.set(-3.05, 0.05, 0);
+    lensMid.castShadow = true;
+    cameraModel.add(lensMid);
+
+    const lensGlass = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.12, 48), lensGlassMaterial);
+    lensGlass.rotation.z = Math.PI / 2;
+    lensGlass.position.set(-3.38, 0.05, 0);
+    cameraModel.add(lensGlass);
+
+    const shutterButton = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.16, 0.16, 24),
+      new THREE.MeshStandardMaterial({ color: 0xd94d4d, roughness: 0.35, metalness: 0.2 }),
+    );
+    shutterButton.position.set(1.0, 1.63, -0.45);
+    shutterButton.rotation.x = Math.PI / 2;
+    shutterButton.castShadow = true;
+    cameraModel.add(shutterButton);
+
+    const dial = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.32, 0.32, 0.18, 28),
+      new THREE.MeshStandardMaterial({ color: 0x0f1219, roughness: 0.35, metalness: 0.65 }),
+    );
+    dial.position.set(0.35, 1.53, 0.6);
+    dial.rotation.x = Math.PI / 2;
+    dial.castShadow = true;
+    cameraModel.add(dial);
+
+    const flash = new THREE.Mesh(
+      new THREE.BoxGeometry(0.56, 0.25, 0.95),
+      new THREE.MeshStandardMaterial({ color: 0xdde3f4, roughness: 0.25, metalness: 0.08 }),
+    );
+    flash.position.set(0, 1.43, 0);
+    flash.castShadow = true;
+    cameraModel.add(flash);
+
+    cameraModel.position.y = 0.15;
+    cameraModel.rotation.y = 0.22;
+    scene.add(cameraModel);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 3.8;
+    controls.maxDistance = 16;
+    controls.target.set(0, 0.3, 0);
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const t = clock.getElapsedTime();
+      cameraModel.rotation.y = 0.22 + Math.sin(t * 0.55) * 0.08;
+      cameraModel.position.y = 0.15 + Math.sin(t * 1.4) * 0.025;
+      lensGlass.material.emissiveIntensity = 0.14 + Math.sin(t * 2.2) * 0.05;
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</html>
