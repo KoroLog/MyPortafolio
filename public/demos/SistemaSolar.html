@@ -65,6 +65,7 @@
     }
     .control-row label { white-space: nowrap; color: #aaa; }
     input[type=range] {
+      appearance: none;
       -webkit-appearance: none;
       width: 140px;
       height: 4px;
@@ -231,9 +232,11 @@
 <div id="legend">
   <b>Controles:</b><br>
   Clic en planeta → info<br>
+  Visitar planeta → modo inmersivo<br>
   Arrastrar → orbitar<br>
   Scroll → zoom<br>
-  Clic derecho → desplazar
+  Clic derecho → desplazar<br>
+  WASD → caminar
 </div>
 
 <!-- Three.js via importmap -->
@@ -249,6 +252,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /* ══════════════════════════════════════════════════════════
    CANVAS TEXTURE GENERATORS
@@ -724,7 +728,7 @@ controls.target.set(0, 0, 0);
 /* ══════════════════════════════════════════════════════════
    STAR FIELD  (particle system)
    ══════════════════════════════════════════════════════════ */
-(function createStarField() {
+const starField = (function createStarField() {
   const N = 10000;
   const positions = new Float32Array(N * 3);
   const rng = seededRng(1234);
@@ -740,7 +744,9 @@ controls.target.set(0, 0, 0);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.6, sizeAttenuation: true });
-  scene.add(new THREE.Points(geo, mat));
+  const points = new THREE.Points(geo, mat);
+  scene.add(points);
+  return points;
 })();
 
 /* ══════════════════════════════════════════════════════════
@@ -895,14 +901,395 @@ PLANET_DATA.forEach(data => {
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let selectedPlanet = null;
-let activeVisitPlanet = null;
+let isImmersiveMode = false;
 
 const DEFAULT_CAMERA_POS = new THREE.Vector3(0, 55, 130);
 const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 0, 0);
+const DEFAULT_SCENE_BG = new THREE.Color(0x000005);
 
-const tmpPlanetPos = new THREE.Vector3();
-let visitOffset = new THREE.Vector3(0, 0, 0);
+const tmpVec = new THREE.Vector3();
+const tmpLook = new THREE.Vector3();
 let cameraTransition = null;
+
+const keyState = { KeyW: false, KeyA: false, KeyS: false, KeyD: false };
+const immersiveGroup = new THREE.Group();
+const gltfLoader = new GLTFLoader();
+const modelCache = new Map();
+let immersiveBuildId = 0;
+
+const immersiveState = {
+  planetData: null,
+  yaw: Math.PI,
+  pitch: -0.05,
+  speed: 10,
+  playerHeight: 1.75,
+  playerPos: new THREE.Vector3(0, 0, 20),
+};
+
+// Free public models sourced from Khronos glTF Sample Assets (GitHub).
+// Licenses vary by model (CC0 / CC-BY / other free terms); see each model README/LICENSE in the source repo.
+const PLANET_MODEL_LIBRARY = {
+  Mercurio: [
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb', scale: 2.2, x: -16, z: -12, yRot: 1.1 },
+  ],
+  Venus: [
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Lantern/glTF-Binary/Lantern.glb', scale: 4.2, x: -9, z: 16, yRot: 0.35 },
+  ],
+  Tierra: [
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Fox/glTF-Binary/Fox.glb', scale: 0.05, x: 12, z: -5, yRot: 2.1 },
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Avocado/glTF-Binary/Avocado.glb', scale: 14, x: -8, z: 10, yRot: 0.6 },
+  ],
+  Marte: [
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/ToyCar/glTF-Binary/ToyCar.glb', scale: 0.8, x: 8, z: -11, yRot: 0.8 },
+  ],
+  'Júpiter': [
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/BoomBox/glTF-Binary/BoomBox.glb', scale: 28, x: -6, z: -18, yRot: 1.8 },
+  ],
+  Saturno: [
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/WaterBottle/glTF-Binary/WaterBottle.glb', scale: 9, x: 14, z: -8, yRot: -0.5 },
+  ],
+  Urano: [
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Duck/glTF-Binary/Duck.glb', scale: 0.03, x: 9, z: 7, yRot: 1.6 },
+  ],
+  Neptuno: [
+    { url: 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SciFiHelmet/glTF-Binary/SciFiHelmet.glb', scale: 8.5, x: 18, z: 18, yRot: -1.2 },
+  ],
+};
+
+function disposeNodeDeep(node) {
+  node.traverse(obj => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+    else if (obj.material) obj.material.dispose();
+  });
+}
+
+function cloneCachedModel(templateScene) {
+  const clone = templateScene.clone(true);
+  clone.traverse(obj => {
+    if (obj.isMesh) {
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+      if (obj.material && !Array.isArray(obj.material)) obj.material = obj.material.clone();
+    }
+  });
+  return clone;
+}
+
+function loadPlanetModelsIntoWorld(planetData, style, buildId) {
+  const modelDefs = PLANET_MODEL_LIBRARY[planetData.name] ?? [];
+  modelDefs.forEach(def => {
+    const placeModel = templateScene => {
+      if (buildId !== immersiveBuildId || !isImmersiveMode) return;
+      const modelRoot = cloneCachedModel(templateScene);
+      modelRoot.scale.setScalar(def.scale ?? 1);
+      modelRoot.rotation.y = def.yRot ?? 0;
+      const x = def.x ?? 0;
+      const z = def.z ?? 0;
+      const y = pseudoTerrainHeight(x, z, style) + (def.yOffset ?? 0);
+      modelRoot.position.set(x, y, z);
+      immersiveGroup.add(modelRoot);
+    };
+
+    const cached = modelCache.get(def.url);
+    if (cached) {
+      placeModel(cached);
+      return;
+    }
+
+    gltfLoader.load(
+      def.url,
+      gltf => {
+        modelCache.set(def.url, gltf.scene);
+        placeModel(gltf.scene);
+      },
+      undefined,
+      () => {
+        // Ignore model load failures; procedural landmarks remain as fallback.
+      }
+    );
+  });
+}
+
+function planetStyle(name) {
+  const styles = {
+    Mercurio: { skyTop: '#3a3230', skyBottom: '#120f0f', groundA: '#7e7165', groundB: '#5f544b', accent: '#9a8b7d', bump: 1.2 },
+    Venus: { skyTop: '#8b6e4f', skyBottom: '#2b2118', groundA: '#c49a64', groundB: '#8f6b42', accent: '#e2bf86', bump: 1.3 },
+    Tierra: { skyTop: '#75b7f2', skyBottom: '#d4edff', groundA: '#2f7b42', groundB: '#6f5a3a', accent: '#8dcf63', bump: 0.7 },
+    Marte: { skyTop: '#bc6b3f', skyBottom: '#3d1f14', groundA: '#a44d2b', groundB: '#6a2f1a', accent: '#ce7a53', bump: 1.0 },
+    Júpiter: { skyTop: '#8f5e35', skyBottom: '#2a1a11', groundA: '#a87345', groundB: '#7c4f2e', accent: '#d3a06a', bump: 0.8 },
+    Saturno: { skyTop: '#947a58', skyBottom: '#2a2217', groundA: '#b19364', groundB: '#836b45', accent: '#d8bc8f', bump: 0.8 },
+    Urano: { skyTop: '#5aa8b0', skyBottom: '#16353b', groundA: '#57aeb7', groundB: '#2f7a82', accent: '#9de6ea', bump: 0.5 },
+    Neptuno: { skyTop: '#345a93', skyBottom: '#121f39', groundA: '#4167a7', groundB: '#273f6e', accent: '#7da5ef', bump: 0.6 },
+  };
+  return styles[name] ?? styles.Tierra;
+}
+
+function makeImmersiveGroundTexture(style, seed) {
+  return makeTexture(1024, 1024, (ctx, w, h) => {
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, style.groundA);
+    g.addColorStop(1, style.groundB);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+
+    const rng = seededRng(seed);
+    for (let i = 0; i < 5000; i++) {
+      const x = rng() * w;
+      const y = rng() * h;
+      const r = rng() * 5 + 1;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      const alpha = rng() * 0.18 + 0.03;
+      ctx.fillStyle = rng() > 0.5 ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha})`;
+      ctx.fill();
+    }
+  });
+}
+
+function pseudoTerrainHeight(x, z, style) {
+  const s = style.bump;
+  return (Math.sin(x * 0.05) * 1.2 + Math.cos(z * 0.06) * 0.9 + Math.sin((x + z) * 0.03) * 0.8) * s;
+}
+
+function clearImmersiveWorld() {
+  while (immersiveGroup.children.length) {
+    const child = immersiveGroup.children.pop();
+    if (!child) continue;
+    disposeNodeDeep(child);
+  }
+}
+
+function buildImmersiveWorld(planetData) {
+  immersiveBuildId += 1;
+  const buildId = immersiveBuildId;
+  clearImmersiveWorld();
+  const style = planetStyle(planetData.name);
+
+  scene.background = new THREE.Color(style.skyBottom);
+  scene.fog = new THREE.Fog(style.skyBottom, 40, 220);
+
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(350, 32, 24),
+    new THREE.MeshBasicMaterial({ color: style.skyTop, side: THREE.BackSide })
+  );
+  immersiveGroup.add(sky);
+
+  const groundGeo = new THREE.PlaneGeometry(240, 240, 80, 80);
+  const pos = groundGeo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    pos.setZ(i, pseudoTerrainHeight(x, y, style));
+  }
+  groundGeo.computeVertexNormals();
+  const groundMat = new THREE.MeshStandardMaterial({
+    map: makeImmersiveGroundTexture(style, Math.floor(planetData.distance * 100)),
+    roughness: 0.95,
+    metalness: 0.02,
+  });
+  groundMat.map.wrapS = groundMat.map.wrapT = THREE.RepeatWrapping;
+  groundMat.map.repeat.set(12, 12);
+
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  immersiveGroup.add(ground);
+
+  const rng = seededRng(Math.floor(planetData.distance * 31));
+  for (let i = 0; i < 90; i++) {
+    const rockR = rng() * 1.2 + 0.4;
+    const rock = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(rockR, 0),
+      new THREE.MeshStandardMaterial({ color: style.accent, roughness: 1, metalness: 0 })
+    );
+    const x = (rng() - 0.5) * 200;
+    const z = (rng() - 0.5) * 200;
+    rock.position.set(x, pseudoTerrainHeight(x, z, style) + rockR * 0.55, z);
+    rock.rotation.set(rng() * Math.PI, rng() * Math.PI, rng() * Math.PI);
+    rock.castShadow = true;
+    immersiveGroup.add(rock);
+  }
+
+  function addFeature(mesh) {
+    immersiveGroup.add(mesh);
+    return mesh;
+  }
+
+  // Planet-specific landmarks so each immersive world feels different.
+  if (planetData.name === 'Mercurio') {
+    for (let i = 0; i < 5; i++) {
+      const crater = new THREE.Mesh(
+        new THREE.CylinderGeometry(5 + i * 0.6, 6 + i * 0.7, 0.5, 24, 1, true),
+        new THREE.MeshStandardMaterial({ color: 0x6a6058, roughness: 1, metalness: 0.03, side: THREE.DoubleSide })
+      );
+      const x = -50 + i * 16;
+      const z = -18 + i * 7;
+      crater.position.set(x, pseudoTerrainHeight(x, z, style) + 0.2, z);
+      crater.rotation.x = Math.PI / 2;
+      crater.rotation.y = i * 0.35;
+      addFeature(crater);
+    }
+  }
+
+  if (planetData.name === 'Venus') {
+    for (let i = 0; i < 10; i++) {
+      const vent = new THREE.Mesh(
+        new THREE.ConeGeometry(0.8 + (i % 3) * 0.25, 4 + (i % 4), 8),
+        new THREE.MeshStandardMaterial({ color: 0x8b6237, roughness: 1, metalness: 0 })
+      );
+      const x = -35 + i * 8;
+      const z = 20 + (i % 2 ? 8 : -6);
+      vent.position.set(x, pseudoTerrainHeight(x, z, style) + 2, z);
+      addFeature(vent);
+    }
+  }
+
+  if (planetData.name === 'Tierra') {
+    const peruPlate = new THREE.Mesh(
+      new THREE.BoxGeometry(10, 5, 2),
+      new THREE.MeshStandardMaterial({ color: 0x5f8f4a, roughness: 0.9 })
+    );
+    peruPlate.position.set(18, pseudoTerrainHeight(18, -14, style) + 2.2, -14);
+    peruPlate.rotation.y = 0.3;
+    immersiveGroup.add(peruPlate);
+
+    const andes = new THREE.Mesh(
+      new THREE.ConeGeometry(7, 9, 8),
+      new THREE.MeshStandardMaterial({ color: 0x617755, roughness: 1 })
+    );
+    andes.position.set(24, pseudoTerrainHeight(24, -20, style) + 4.5, -20);
+    immersiveGroup.add(andes);
+
+    const lake = new THREE.Mesh(
+      new THREE.CircleGeometry(9, 32),
+      new THREE.MeshStandardMaterial({ color: 0x2f6fb3, roughness: 0.25, metalness: 0.1 })
+    );
+    lake.rotation.x = -Math.PI / 2;
+    lake.position.set(-15, pseudoTerrainHeight(-15, 12, style) + 0.05, 12);
+    addFeature(lake);
+  }
+
+  if (planetData.name === 'Marte') {
+    const olympus = new THREE.Mesh(
+      new THREE.ConeGeometry(12, 16, 20),
+      new THREE.MeshStandardMaterial({ color: 0x8a3f25, roughness: 1, metalness: 0 })
+    );
+    olympus.position.set(-30, pseudoTerrainHeight(-30, -25, style) + 8, -25);
+    addFeature(olympus);
+
+    const rover = new THREE.Mesh(
+      new THREE.BoxGeometry(2.4, 1.2, 3),
+      new THREE.MeshStandardMaterial({ color: 0xb78c66, roughness: 0.7, metalness: 0.2 })
+    );
+    rover.position.set(12, pseudoTerrainHeight(12, -8, style) + 0.9, -8);
+    addFeature(rover);
+  }
+
+  if (planetData.name === 'Júpiter') {
+    const storm = new THREE.Mesh(
+      new THREE.TorusGeometry(14, 2.2, 18, 64),
+      new THREE.MeshStandardMaterial({ color: 0xb35a32, roughness: 0.55, metalness: 0.08 })
+    );
+    storm.position.set(0, pseudoTerrainHeight(0, 0, style) + 8, -40);
+    storm.rotation.x = Math.PI / 2;
+    addFeature(storm);
+  }
+
+  if (planetData.name === 'Saturno') {
+    const ringArch = new THREE.Mesh(
+      new THREE.TorusGeometry(24, 1.1, 16, 64),
+      new THREE.MeshStandardMaterial({ color: 0xd6bf96, roughness: 0.8, metalness: 0.05 })
+    );
+    ringArch.position.set(0, 18, -55);
+    ringArch.rotation.x = Math.PI * 0.35;
+    addFeature(ringArch);
+  }
+
+  if (planetData.name === 'Urano') {
+    for (let i = 0; i < 14; i++) {
+      const crystal = new THREE.Mesh(
+        new THREE.ConeGeometry(0.45 + (i % 3) * 0.15, 2.8 + (i % 4) * 0.5, 5),
+        new THREE.MeshStandardMaterial({ color: 0xa3f3f7, roughness: 0.35, metalness: 0.2 })
+      );
+      const x = -42 + i * 6;
+      const z = -15 + (i % 2 ? 9 : -7);
+      crystal.position.set(x, pseudoTerrainHeight(x, z, style) + 1.3, z);
+      addFeature(crystal);
+    }
+  }
+
+  if (planetData.name === 'Neptuno') {
+    const darkSpot = new THREE.Mesh(
+      new THREE.CircleGeometry(10, 40),
+      new THREE.MeshStandardMaterial({ color: 0x1a2a56, roughness: 0.45, metalness: 0.05 })
+    );
+    darkSpot.rotation.x = -Math.PI / 2;
+    darkSpot.position.set(20, pseudoTerrainHeight(20, 22, style) + 0.08, 22);
+    addFeature(darkSpot);
+
+    for (let i = 0; i < 7; i++) {
+      const plume = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.25, 0.5, 4 + i * 0.35, 8),
+        new THREE.MeshStandardMaterial({ color: 0x7fb8f6, roughness: 0.5, metalness: 0.15 })
+      );
+      const x = 8 + i * 2.4;
+      const z = 10 + (i % 2 ? 2 : -2);
+      plume.position.set(x, pseudoTerrainHeight(x, z, style) + 2.1, z);
+      addFeature(plume);
+    }
+  }
+
+  loadPlanetModelsIntoWorld(planetData, style, buildId);
+
+  scene.add(immersiveGroup);
+}
+
+function setSolarSystemVisible(visible) {
+  sunMesh.visible = visible;
+  starField.visible = visible;
+  planetObjects.forEach(({ orbitPivot, orbitLine }) => {
+    orbitPivot.visible = visible;
+    orbitLine.visible = visible && showOrbits;
+  });
+}
+
+function updateImmersiveCamera() {
+  const dir = new THREE.Vector3(
+    Math.sin(immersiveState.yaw) * Math.cos(immersiveState.pitch),
+    Math.sin(immersiveState.pitch),
+    Math.cos(immersiveState.yaw) * Math.cos(immersiveState.pitch)
+  );
+  tmpLook.copy(immersiveState.playerPos).add(dir);
+  camera.position.copy(immersiveState.playerPos);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(tmpLook);
+  controls.target.copy(tmpLook);
+}
+
+function enterImmersiveMode(mesh) {
+  const planetData = PLANET_DATA.find(p => p.name === mesh.name);
+  if (!planetData) return;
+
+  immersiveState.planetData = planetData;
+  immersiveState.yaw = Math.PI;
+  immersiveState.pitch = -0.06;
+  immersiveState.playerPos.set(0, 3.2, 18);
+
+  buildImmersiveWorld(planetData);
+  isImmersiveMode = true;
+  controls.enabled = false;
+  setSolarSystemVisible(false);
+
+  const targetPos = immersiveState.playerPos.clone();
+  const targetLook = targetPos.clone().add(new THREE.Vector3(0, 0, -8));
+  startCameraTransition(targetPos, targetLook, 0.8, () => {
+    updateImmersiveCamera();
+    updateVisitButtons();
+  });
+
+  renderer.domElement.requestPointerLock?.();
+}
 
 function startCameraTransition(targetPos, targetLookAt, duration = 1.1, onComplete = null) {
   cameraTransition = {
@@ -933,29 +1320,53 @@ function updateCameraTransition(delta) {
   }
 }
 
-function beginPlanetVisit(mesh) {
+function computeSurfacePose(mesh, lat, lon, height = 0.08) {
   const radius = mesh.geometry.parameters.radius ?? 1;
-  const followDistance = Math.max(4.5, radius * 6);
-  const offsetDir = new THREE.Vector3(1, 0.35, 1).normalize().multiplyScalar(followDistance);
 
-  const worldPos = mesh.getWorldPosition(new THREE.Vector3());
-  const targetCameraPos = worldPos.clone().add(offsetDir);
+  const cosLat = Math.cos(lat);
+  const sinLat = Math.sin(lat);
+  const cosLon = Math.cos(lon);
+  const sinLon = Math.sin(lon);
 
-  startCameraTransition(targetCameraPos, worldPos, 1.1, () => {
-    activeVisitPlanet = mesh;
-    visitOffset = camera.position.clone().sub(controls.target);
-    updateVisitButtons();
-  });
+  const localPos = new THREE.Vector3(
+    (radius + height) * cosLat * cosLon,
+    (radius + height) * sinLat,
+    (radius + height) * cosLat * sinLon
+  );
+
+  const worldPos = mesh.localToWorld(localPos.clone());
+  const worldCenter = mesh.getWorldPosition(new THREE.Vector3());
+  const worldNormal = worldPos.clone().sub(worldCenter).normalize();
+
+  const eastLocal = new THREE.Vector3(-sinLon, 0, cosLon).normalize();
+  const eastWorld = eastLocal.transformDirection(mesh.matrixWorld);
+
+  const forward = eastWorld.clone().multiplyScalar(1.6).add(worldNormal.clone().multiplyScalar(-0.35)).normalize();
+  const lookAt = worldPos.clone().add(forward.multiplyScalar(2.2));
+
+  return { worldPos, worldCenter, worldNormal, lookAt, radius };
 }
 
 function goToOverview() {
-  activeVisitPlanet = null;
+  isImmersiveMode = false;
+  immersiveState.planetData = null;
+  clearImmersiveWorld();
+  scene.background = DEFAULT_SCENE_BG;
+  scene.fog = null;
+  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+  setSolarSystemVisible(true);
   startCameraTransition(DEFAULT_CAMERA_POS, DEFAULT_CAMERA_TARGET, 1.15, () => {
+    controls.enabled = true;
     updateVisitButtons();
   });
 }
 
 renderer.domElement.addEventListener('click', e => {
+  if (isImmersiveMode) {
+    if (document.pointerLockElement !== renderer.domElement) renderer.domElement.requestPointerLock?.();
+    return;
+  }
+
   // Normalise mouse coords
   const rect = renderer.domElement.getBoundingClientRect();
   mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
@@ -973,6 +1384,13 @@ renderer.domElement.addEventListener('click', e => {
 
 // Hover: change cursor
 renderer.domElement.addEventListener('mousemove', e => {
+  if (isImmersiveMode && document.pointerLockElement === renderer.domElement) {
+    immersiveState.yaw -= e.movementX * 0.0022;
+    immersiveState.pitch -= e.movementY * 0.0016;
+    immersiveState.pitch = THREE.MathUtils.clamp(immersiveState.pitch, -1.2, 1.2);
+    return;
+  }
+
   const rect = renderer.domElement.getBoundingClientRect();
   mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
   mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
@@ -994,8 +1412,9 @@ const btnOverview  = document.getElementById('btn-overview');
 
 function updateVisitButtons() {
   btnVisit.disabled = !selectedPlanet;
-  btnVisit.classList.toggle('active', !!selectedPlanet && selectedPlanet === activeVisitPlanet);
-  btnOverview.classList.toggle('active', !activeVisitPlanet);
+  btnVisit.classList.toggle('active', !!selectedPlanet && isImmersiveMode);
+  btnOverview.classList.toggle('active', !isImmersiveMode);
+  btnOverview.textContent = isImmersiveMode ? 'Salir inmersivo' : 'Vista general';
 }
 
 function showInfo(name) {
@@ -1018,7 +1437,7 @@ closeBtn.addEventListener('click', () => {
 
 btnVisit.addEventListener('click', () => {
   if (!selectedPlanet) return;
-  beginPlanetVisit(selectedPlanet);
+  enterImmersiveMode(selectedPlanet);
 });
 
 btnOverview.addEventListener('click', () => {
@@ -1057,7 +1476,15 @@ speedSlider.addEventListener('input', () => {
 });
 
 window.addEventListener('keydown', e => {
+  if (e.code in keyState) {
+    keyState[e.code] = true;
+    if (isImmersiveMode) e.preventDefault();
+  }
   if (e.key === 'Escape') goToOverview();
+});
+
+window.addEventListener('keyup', e => {
+  if (e.code in keyState) keyState[e.code] = false;
 });
 
 /* ══════════════════════════════════════════════════════════
@@ -1092,12 +1519,32 @@ function animate() {
     });
   }
 
-  if (activeVisitPlanet && !cameraTransition) {
-    activeVisitPlanet.getWorldPosition(tmpPlanetPos);
-    const desiredPos = tmpPlanetPos.clone().add(visitOffset);
-    const followLerp = 1 - Math.exp(-6 * delta);
-    controls.target.lerp(tmpPlanetPos, followLerp);
-    camera.position.lerp(desiredPos, followLerp * 0.8);
+  if (isImmersiveMode && immersiveState.planetData && !cameraTransition) {
+    tmpVec.set(0, 0, 0);
+    const forward = new THREE.Vector3(Math.sin(immersiveState.yaw), 0, Math.cos(immersiveState.yaw)).normalize();
+    const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+
+    if (keyState.KeyW) tmpVec.add(forward);
+    if (keyState.KeyS) tmpVec.sub(forward);
+    if (keyState.KeyA) tmpVec.sub(right);
+    if (keyState.KeyD) tmpVec.add(right);
+
+    if (tmpVec.lengthSq() > 0) {
+      tmpVec.normalize().multiplyScalar(immersiveState.speed * delta);
+      immersiveState.playerPos.add(tmpVec);
+    }
+
+    const maxRadius = 105;
+    const planarDist = Math.hypot(immersiveState.playerPos.x, immersiveState.playerPos.z);
+    if (planarDist > maxRadius) {
+      immersiveState.playerPos.x *= maxRadius / planarDist;
+      immersiveState.playerPos.z *= maxRadius / planarDist;
+    }
+
+    const style = planetStyle(immersiveState.planetData.name);
+    const groundY = pseudoTerrainHeight(immersiveState.playerPos.x, immersiveState.playerPos.z, style);
+    immersiveState.playerPos.y = groundY + immersiveState.playerHeight;
+    updateImmersiveCamera();
   }
 
   updateCameraTransition(delta);
