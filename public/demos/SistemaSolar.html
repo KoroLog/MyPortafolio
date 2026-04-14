@@ -50,6 +50,12 @@
     }
     .btn:hover { background: rgba(255,255,255,0.15); border-color: #ffcc55; }
     .btn.active { background: rgba(255,200,80,0.2); border-color: #ffcc55; color: #ffcc55; }
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      border-color: rgba(255,255,255,0.12);
+      color: #888;
+    }
 
     .control-row {
       display: flex;
@@ -121,6 +127,16 @@
     }
     #info-stats li:last-child { border: none; }
     #info-stats li span { color: #e0e0e0; font-weight: 600; float: right; }
+    .panel-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .panel-actions .btn {
+      padding: 6px 10px;
+      font-size: 12px;
+    }
     #close-btn {
       position: absolute;
       top: 10px;
@@ -205,6 +221,10 @@
   <h2 id="info-name"></h2>
   <p id="info-desc"></p>
   <ul id="info-stats"></ul>
+  <div class="panel-actions">
+    <button id="btn-visit" class="btn" disabled>Visitar planeta</button>
+    <button id="btn-overview" class="btn">Vista general</button>
+  </div>
 </div>
 
 <!-- Legend -->
@@ -875,6 +895,65 @@ PLANET_DATA.forEach(data => {
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let selectedPlanet = null;
+let activeVisitPlanet = null;
+
+const DEFAULT_CAMERA_POS = new THREE.Vector3(0, 55, 130);
+const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 0, 0);
+
+const tmpPlanetPos = new THREE.Vector3();
+let visitOffset = new THREE.Vector3(0, 0, 0);
+let cameraTransition = null;
+
+function startCameraTransition(targetPos, targetLookAt, duration = 1.1, onComplete = null) {
+  cameraTransition = {
+    startPos: camera.position.clone(),
+    startTarget: controls.target.clone(),
+    endPos: targetPos.clone(),
+    endTarget: targetLookAt.clone(),
+    duration,
+    elapsed: 0,
+    onComplete,
+  };
+}
+
+function updateCameraTransition(delta) {
+  if (!cameraTransition) return;
+
+  cameraTransition.elapsed += delta;
+  const t = Math.min(cameraTransition.elapsed / cameraTransition.duration, 1);
+  const eased = 1 - Math.pow(1 - t, 3);
+
+  camera.position.lerpVectors(cameraTransition.startPos, cameraTransition.endPos, eased);
+  controls.target.lerpVectors(cameraTransition.startTarget, cameraTransition.endTarget, eased);
+
+  if (t >= 1) {
+    const done = cameraTransition.onComplete;
+    cameraTransition = null;
+    if (done) done();
+  }
+}
+
+function beginPlanetVisit(mesh) {
+  const radius = mesh.geometry.parameters.radius ?? 1;
+  const followDistance = Math.max(4.5, radius * 6);
+  const offsetDir = new THREE.Vector3(1, 0.35, 1).normalize().multiplyScalar(followDistance);
+
+  const worldPos = mesh.getWorldPosition(new THREE.Vector3());
+  const targetCameraPos = worldPos.clone().add(offsetDir);
+
+  startCameraTransition(targetCameraPos, worldPos, 1.1, () => {
+    activeVisitPlanet = mesh;
+    visitOffset = camera.position.clone().sub(controls.target);
+    updateVisitButtons();
+  });
+}
+
+function goToOverview() {
+  activeVisitPlanet = null;
+  startCameraTransition(DEFAULT_CAMERA_POS, DEFAULT_CAMERA_TARGET, 1.15, () => {
+    updateVisitButtons();
+  });
+}
 
 renderer.domElement.addEventListener('click', e => {
   // Normalise mouse coords
@@ -910,6 +989,14 @@ const infoName     = document.getElementById('info-name');
 const infoDesc     = document.getElementById('info-desc');
 const infoStats    = document.getElementById('info-stats');
 const closeBtn     = document.getElementById('close-btn');
+const btnVisit     = document.getElementById('btn-visit');
+const btnOverview  = document.getElementById('btn-overview');
+
+function updateVisitButtons() {
+  btnVisit.disabled = !selectedPlanet;
+  btnVisit.classList.toggle('active', !!selectedPlanet && selectedPlanet === activeVisitPlanet);
+  btnOverview.classList.toggle('active', !activeVisitPlanet);
+}
 
 function showInfo(name) {
   const data = PLANET_DATA.find(p => p.name === name);
@@ -920,11 +1007,22 @@ function showInfo(name) {
     `<li>${k}<span>${v}</span></li>`
   ).join('');
   infoPanel.classList.add('visible');
+  updateVisitButtons();
 }
 
 closeBtn.addEventListener('click', () => {
   infoPanel.classList.remove('visible');
   selectedPlanet = null;
+  updateVisitButtons();
+});
+
+btnVisit.addEventListener('click', () => {
+  if (!selectedPlanet) return;
+  beginPlanetVisit(selectedPlanet);
+});
+
+btnOverview.addEventListener('click', () => {
+  goToOverview();
 });
 
 /* ══════════════════════════════════════════════════════════
@@ -956,6 +1054,10 @@ btnOrbits.addEventListener('click', () => {
 speedSlider.addEventListener('input', () => {
   speedMultiplier = parseFloat(speedSlider.value);
   speedVal.textContent = speedMultiplier.toFixed(2).replace(/\.?0+$/, '') + '×';
+});
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape') goToOverview();
 });
 
 /* ══════════════════════════════════════════════════════════
@@ -990,6 +1092,16 @@ function animate() {
     });
   }
 
+  if (activeVisitPlanet && !cameraTransition) {
+    activeVisitPlanet.getWorldPosition(tmpPlanetPos);
+    const desiredPos = tmpPlanetPos.clone().add(visitOffset);
+    const followLerp = 1 - Math.exp(-6 * delta);
+    controls.target.lerp(tmpPlanetPos, followLerp);
+    camera.position.lerp(desiredPos, followLerp * 0.8);
+  }
+
+  updateCameraTransition(delta);
+
   controls.update();
   renderer.render(scene, camera);
 }
@@ -1000,6 +1112,7 @@ function animate() {
 // Small delay to let importmap modules settle, then hide loader
 setTimeout(() => {
   document.getElementById('loading').style.display = 'none';
+  updateVisitButtons();
   animate();
 }, 300);
 
