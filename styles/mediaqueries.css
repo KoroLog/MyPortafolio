@@ -5,4 +5,33 @@
   #hamburger-nav {
     display: flex;
   }
+  
+  section {
+    margin: 0 5rem;
+  }
+  
+  .section-container {
+    flex-direction: column;
+    gap: 2rem;
+  }
+  
+  #about {
+    margin: 0;
+  }
+}
+
+@media screen and (max-width: 600px) {
+  .section-container {
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+  
+  .about-container {
+    grid-template-columns: 1fr;
+  }
+  
+  .section__pic-container {
+    height: 250px;
+    width: 250px;
+  }
 }
